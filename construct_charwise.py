@@ -1,47 +1,56 @@
-from construct import *
+from __future__ import annotations
+from construct import Construct, SizeofError, StreamError
+from typing import Dict, Iterable, Union, IO, Callable, Any
 import attr
 
 # Base construct for reading 1 character at a time from a byetstream containing
 # encoded characters.
 
-# Use composition to separate out different parsing strategies and character sizes,
-# without binding into an inheritance hierarchy.
+# Use composition to separate out different parsing strategies and character
+# sizes, without binding into an inheritance hierarchy.
 
-# Use attrs to only allow creation of a fully formed Character construct. Any work
-# done to build 
+# Use attrs to only allow creation of a fully formed Character construct. Any
+# work done to build the component parts must be done beforehand, such as by
+# the `get` class method.
+
+ContextType = Any
+PathType = Any
+ParserFuncType = Callable[["Character", IO, ContextType, PathType], str]
+SizeOfFuncType = Callable[["Character", ContextType, PathType], int]
+
 
 @attr.s
 class Character(Construct):
-    encoding_name = attr.ib()
-    parse_func = attr.ib()
-    sizeof_func = attr.ib()
+    encoding_name: str = attr.ib()
+    parse_func: ParserFuncType = attr.ib()
+    sizeof_func: SizeOfFuncType = attr.ib()
 
-    _characters_by_encoding = {}
+    _characters_by_encoding: Dict[str, Character] = {}
 
     def __attrs_post_init__(self):
         super(Character, self).__init__()
 
-    def decode_bytes(self, bytevals):
+    def decode_bytes(self, bytevals: bytes) -> str:
         return str(bytevals, self.encoding_name)
 
-    def encode_str(self, string):
+    def encode_str(self, string: str) -> bytes:
         return bytes(string, self.encoding_name)
 
-    def _parse(self, stream, context, path):
+    def _parse(self, stream: IO, context: ContextType, path: PathType) -> str:
         return self.parse_func(self, stream, context, path)
 
-    def _build(self, obj, stream, context, path):
+    def _build(self, obj, stream: IO, context: ContextType, path: PathType) -> bytes:
         data = b""
         if len(obj) > 0:
             data = bytes(obj[0], self.encoding_name)
             stream.write(data)
         return data
 
-    def _sizeof(self, context, path):
+    def _sizeof(self, context: ContextType, path: PathType) -> int:
         return self.sizeof_func(self, context, path)
 
     @classmethod
-    def _name_variants(cls, name):
+    def _name_variants(cls, name: str) -> Iterable[str]:
         name = name.lower()
         yield name
         name = name.replace("_", "-")
@@ -56,7 +65,12 @@ class Character(Construct):
             yield name1.replace("-", "_")
 
     @classmethod
-    def add_encoding(cls, encoding_names, parse_func, sizeof_func):
+    def add_encoding(
+        cls,
+        encoding_names: Union[str, Iterable[str]],
+        parse_func: ParserFuncType,
+        sizeof_func: SizeOfFuncType,
+    ) -> None:
         if isinstance(encoding_names, str):
             encoding_names = [encoding_names]
         names = set()
@@ -70,13 +84,17 @@ class Character(Construct):
                 )
 
     @classmethod
-    def get(cls, encoding):
+    def get(cls, encoding: str) -> Character:
         return cls._characters_by_encoding[encoding]
+
 
 # Parsing functions to be used by Characters
 
-def _parse_utf8(character: Character, stream, context, path):
-    first = stream.read(stream, 1)
+
+def _parse_utf8(
+    character: Character, stream: IO, context: ContextType, path: PathType
+) -> str:
+    first = stream.read(1)
     data = first
     first = first[0]
     if first & 0x80 != 0:
@@ -93,17 +111,25 @@ def _parse_utf8(character: Character, stream, context, path):
     return character.decode_bytes(data)
 
 
-def _parse_fixed_width(character: Character, stream, context, path):
+def _parse_fixed_width(
+    character: Character, stream: IO, context: ContextType, path
+) -> str:
     return character.decode_bytes(stream.read(character.sizeof()))
+
 
 # Sizeof functions
 
-def _sizeof_error(character: Character, context, path):
+
+def _sizeof_error(character: Character, context: ContextType, path: PathType):
     raise SizeofError()
 
 
-def _fixed_sizeof(width):
-    return lambda character: Character, *args, **kwargs: width
+def _fixed_sizeof(width: int) -> SizeOfFuncType:
+    def fixed_width(character: Character, context: ContextType, path: PathType) -> int:
+        return width
+
+    return fixed_width
+
 
 # Define the known encodings
 
@@ -115,100 +141,179 @@ Character.add_encoding(
     ["u32", "utf-32", "utf-32-le", "utf-32-be"], _parse_fixed_width, _fixed_sizeof(4)
 )
 
-# Base construct for building strings of characters from encoded byte streams
+# Construct for building strings of characters from encoded byte streams
+
+# This class just implements an algorithm skeleton for parsing strings by
+# character, but with key steps of the algorithm parametrized. Functions
+# implementing these steps are passed in as arguments, i.e. composition
+# rather than inheritance.
+
+CharGetterFuncType = Callable[["CharacterString", IO, ContextType, PathType], str]
+KeepGoingFuncType = Callable[["CharacterString", str], bool]
+PostProcessFuncType = Callable[["CharacterString", str], str]
+BuildFuncType = Callable[["CharacterString", Any, IO, ContextType, PathType], bytes]
+
 
 @attr.s
 class CharacterString(Construct):
     character: Character = attr.ib()
-    _stop = attr.ib(init=False, default=False)
+    _char_getter: CharGetterFuncType = attr.ib()
+    _keep_going_checker: KeepGoingFuncType = attr.ib()
+    _post_processor: PostProcessFuncType = attr.ib()
+    _builder: BuildFuncType = attr.ib()
+
+    class StopHere(RuntimeError):
+        pass
 
     def __attrs_post_init__(self):
         super(CharacterString, self).__init__()
 
-    @classmethod
-    def from_encoding(cls, encoding="utf8"):
-        return cls(Character.get(encoding))
-
-    def _parse(self, stream, context, path):
+    def _parse(self, stream: IO, context: ContextType, path: PathType) -> str:
         data = ""
-        self._stop = False
-        while not self._stop and self._keep_going(data):
-            data += self._get_next_char(stream, context, path)
+        try:
+            while self._keep_going_checker(self, data):
+                data += self._char_getter(self, stream, context, path)
+        except self.StopHere:
+            pass
         if len(data) == 0:
             # We have to put this in to stop an infinite loop
             # when matching the empty string
             raise StreamError()
-        return self._post_process(data)
+        return self._post_processor(self, data)
 
-    def _keep_going(self, data):
-        raise NotImplementedError()
-
-    def _get_next_char(self, stream, context, path):
-        return self.character._parsereport(stream, context, path)
-
-    def _post_process(self, data):
-        return data
-
-    def _build(self, obj, stream, context, path):
-        raise NotImplementedError()
+    def _build(self, obj, stream: IO, context: ContextType, path: PathType) -> bytes:
+        return self._builder(self, obj, stream, context, path)
 
 
 @attr.s
-class FixedLengthCharacterString(CharacterString):
-    _length = attr.ib()
+class CharStringFactory:
+    ch_str_maker: Callable[..., CharacterString] = attr.ib()
 
-    @classmethod
-    def from_encoding(cls, encoding, length):
-        return cls(Character.get(encoding), length)
+    def __call__(self, character: Character, *args, **kwargs) -> CharacterString:
+        return self.ch_str_maker(character, *args, **kwargs)
 
-    def _keep_going(self, data):
-        return len(data) < self._length
+    def from_encoding(self, encoding: str, *args, **kwargs) -> CharacterString:
+        character = Character.get(encoding)
+        return self(character, *args, **kwargs)
 
 
-@attr.s
-class TerminatedCharacterString(CharacterString):
-    _term = attr.ib(default="\n")
-    _consume = attr.ib(default=True)
-    _require = attr.ib(default=True)
+# An instantiation of CharacterString which parses a fixed number of characters.
 
-    @classmethod
-    def from_encoding(cls, encoding="utf8", term="\n", consume=True, require=True):
-        return cls(Character.get(encoding), term, consume, require)
 
-    def _keep_going(self, data):
-        return len(data) < len(self._term) or data[-len(self._term) :] != self._term
+def make_fixed_length_char_string(character: Character, length: int) -> CharacterString:
+    return CharacterString(
+        character,
+        char_getter=_simple_get_next_char,
+        keep_going_checker=_fixed_length_checker(length),
+        post_processor=_do_nothing_post_processor,
+        builder=_fixed_length_builder(length),
+    )
 
-    def _get_next_char(self, stream, context, path):
+
+FixedLengthCharacterString = CharStringFactory(make_fixed_length_char_string)
+
+
+# The methods which implement FixedLengthCharacterString: we
+# may be able to re-use these for some other type of CharacterString
+# if there is an overlap in functionality.
+
+
+def _simple_get_next_char(
+    char_str: CharacterString, stream: IO, context: ContextType, path: PathType
+) -> str:
+    return char_str.character._parsereport(stream, context, path)
+
+
+def _fixed_length_checker(length: int) -> KeepGoingFuncType:
+    def has_reached_fixed_length(char_str: CharacterString, data: str) -> bool:
+        return len(data) < length
+
+    return has_reached_fixed_length
+
+
+def _do_nothing_post_processor(char_str: CharacterString, data: str) -> str:
+    return data
+
+
+def _fixed_length_builder(length: int) -> BuildFuncType:
+    def _fixed_length_string_builder(
+        cstr: CharacterString, obj, stream: IO, context: ContextType, path: PathType
+    ) -> bytes:
+        # TODO: what's the right behavior here?
+        raise NotImplementedError()
+
+    return _fixed_length_string_builder
+
+
+# An instantiation of CharacterString which parses characters until a specified
+# terminating string is encountered, or the stream ends.
+
+
+def make_terminated_character_string(
+    character: Character, term="\n", consume=True, require=True
+) -> CharacterString:
+    return CharacterString(
+        character,
+        char_getter=_get_next_char_or_maybe_error(require),
+        keep_going_checker=_terminating_checker(term),
+        post_processor=_terminating_post_processor(term, consume),
+        builder=_terminating_string_builder(term),
+    )
+
+
+TerminatedCharacterString = CharStringFactory(make_terminated_character_string)
+
+
+def _get_next_char_or_maybe_error(require: bool) -> CharGetterFuncType:
+    def _get_next_char(
+        char_str: CharacterString, stream: IO, context: ContextType, path: PathType
+    ):
         try:
-            return self.character._parsereport(stream, context, path)
+            return char_str.character._parsereport(stream, context, path)
         except StreamError:
-            if self._require:
+            if require:
                 raise
             else:
-                self._stop = True
-                return ""
+                raise char_str.StopHere()
 
-    def _post_process(self, data):
-        if self._consume and len(data) > len(self._term):
-            data = data[: -len(self._term)]
+    return _get_next_char
+
+
+def _terminating_checker(term: str) -> KeepGoingFuncType:
+    def terminating_string_check(char_str: CharacterString, data: str) -> bool:
+        return len(data) < len(term) or data[-len(term) :] != term
+
+    return terminating_string_check
+
+
+def _terminating_post_processor(term: str, consume: bool) -> PostProcessFuncType:
+    def terminating_post_process(char_str: CharacterString, data: str) -> str:
+        if consume and len(data) >= len(term) and data.endswith(term):
+            data = data[: -len(term)]
         return data
 
-    def _build(self, obj, stream, context, path):
+    return terminating_post_process
+
+
+def _terminating_string_builder(term: str) -> BuildFuncType:
+    def _build_terminated_string(
+        char_str: CharacterString, obj, stream: IO, context: ContextType, path: PathType
+    ) -> bytes:
         data = b""
-        for char in obj + self._term:
-            data += self.character._build(char, stream, context, path)
+        for char in obj + term:
+            data += char_str.character._build(char, stream, context, path)
         return data
 
+    return _build_terminated_string
 
-WindowsCharacterLine = lambda encoding, consume=True, require=False: TerminatedCharacterString.from_encoding(
-    encoding=encoding, term="\r\n", consume=consume, require=require
-)
-LinuxCharacterLine = lambda encoding, consume=True, require=False: TerminatedCharacterString.from_encoding(
-    encoding=encoding, term="\n", consume=consume, require=require
-)
 
-CharacterLine = lambda encoding, consume=True, require=False: Select(
-    WindowsCharacterLine(encoding=encoding, consume=consume, require=require),
-    LinuxCharacterLine(encoding=encoding, consume=consume, require=require),
-)
+def WindowsCharacterLine(encoding: str, consume=True, require=False) -> CharacterString:
+    return TerminatedCharacterString.from_encoding(
+        encoding=encoding, term="\r\n", consume=consume, require=require
+    )
 
+
+def LinuxCharacterLine(encoding: str, consume=True, require=False) -> CharacterString:
+    return TerminatedCharacterString.from_encoding(
+        encoding=encoding, term="\n", consume=consume, require=require
+    )
