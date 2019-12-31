@@ -1,6 +1,6 @@
 from __future__ import annotations
 from construct import Construct, SizeofError, StreamError
-from typing import Dict, Iterable, Union, IO, Callable, Any
+from typing import Dict, Iterable, Union, IO, Callable, Any, Container, TypeVar
 import attr
 
 # Base construct for reading 1 character at a time from a byetstream containing
@@ -13,7 +13,7 @@ import attr
 # work done to build the component parts must be done beforehand, such as by
 # the `get` class method.
 
-ContextType = Any
+ContextType = Container
 PathType = Any
 ParserFuncType = Callable[["Character", IO, ContextType, PathType], str]
 SizeOfFuncType = Callable[["Character", ContextType, PathType], int]
@@ -133,6 +133,7 @@ def _fixed_sizeof(width: int) -> SizeOfFuncType:
 
 # Define the known encodings
 
+Character.add_encoding(["ascii"], _parse_fixed_width, _fixed_sizeof(1))
 Character.add_encoding(["utf-8", "u8"], _parse_utf8, _sizeof_error)
 Character.add_encoding(
     ["u16", "utf-16", "utf-16-le", "utf-16-be"], _parse_fixed_width, _fixed_sizeof(2)
@@ -148,9 +149,12 @@ Character.add_encoding(
 # implementing these steps are passed in as arguments, i.e. composition
 # rather than inheritance.
 
+_T = TypeVar("_T")
+ContextVariable = Union[_T, Callable[[ContextType], _T]]
+
 CharGetterFuncType = Callable[["CharacterString", IO, ContextType, PathType], str]
-KeepGoingFuncType = Callable[["CharacterString", str], bool]
-PostProcessFuncType = Callable[["CharacterString", str], str]
+KeepGoingFuncType = Callable[["CharacterString", str, ContextType], bool]
+PostProcessFuncType = Callable[["CharacterString", str, ContextType], str]
 BuildFuncType = Callable[["CharacterString", Any, IO, ContextType, PathType], bytes]
 
 
@@ -171,7 +175,7 @@ class CharacterString(Construct):
     def _parse(self, stream: IO, context: ContextType, path: PathType) -> str:
         data = ""
         try:
-            while self._keep_going_checker(self, data):
+            while self._keep_going_checker(self, data, context):
                 data += self._char_getter(self, stream, context, path)
         except self.StopHere:
             pass
@@ -179,10 +183,14 @@ class CharacterString(Construct):
             # We have to put this in to stop an infinite loop
             # when matching the empty string
             raise StreamError()
-        return self._post_processor(self, data)
+        return self._post_processor(self, data, context)
 
     def _build(self, obj, stream: IO, context: ContextType, path: PathType) -> bytes:
         return self._builder(self, obj, stream, context, path)
+
+    def _sizeof(self, context: ContextType, path: PathType) -> int:
+        # TODO: implement sizeof capability
+        raise NotImplementedError
 
 
 @attr.s
@@ -200,7 +208,9 @@ class CharStringFactory:
 # An instantiation of CharacterString which parses a fixed number of characters.
 
 
-def make_fixed_length_char_string(character: Character, length: int) -> CharacterString:
+def make_fixed_length_char_string(
+    character: Character, length: ContextVariable[int]
+) -> CharacterString:
     return CharacterString(
         character,
         char_getter=_simple_get_next_char,
@@ -224,18 +234,23 @@ def _simple_get_next_char(
     return char_str.character._parsereport(stream, context, path)
 
 
-def _fixed_length_checker(length: int) -> KeepGoingFuncType:
-    def has_reached_fixed_length(char_str: CharacterString, data: str) -> bool:
-        return len(data) < length
+def _fixed_length_checker(length: ContextVariable[int]) -> KeepGoingFuncType:
+    def has_reached_fixed_length(
+        char_str: CharacterString, data: str, context: ContextType
+    ) -> bool:
+        length_ = length(context) if callable(length) else length
+        return len(data) < length_
 
     return has_reached_fixed_length
 
 
-def _do_nothing_post_processor(char_str: CharacterString, data: str) -> str:
+def _do_nothing_post_processor(
+    char_str: CharacterString, data: str, context: ContextType
+) -> str:
     return data
 
 
-def _fixed_length_builder(length: int) -> BuildFuncType:
+def _fixed_length_builder(length: ContextVariable[int]) -> BuildFuncType:
     def _fixed_length_string_builder(
         cstr: CharacterString, obj, stream: IO, context: ContextType, path: PathType
     ) -> bytes:
@@ -250,7 +265,10 @@ def _fixed_length_builder(length: int) -> BuildFuncType:
 
 
 def make_terminated_character_string(
-    character: Character, term="\n", consume=True, require=True
+    character: Character,
+    term: ContextVariable[str] = "\n",
+    consume: ContextVariable[bool] = True,
+    require: ContextVariable[bool] = True,
 ) -> CharacterString:
     return CharacterString(
         character,
@@ -264,14 +282,15 @@ def make_terminated_character_string(
 TerminatedCharacterString = CharStringFactory(make_terminated_character_string)
 
 
-def _get_next_char_or_maybe_error(require: bool) -> CharGetterFuncType:
+def _get_next_char_or_maybe_error(require: ContextVariable[bool]) -> CharGetterFuncType:
     def _get_next_char(
         char_str: CharacterString, stream: IO, context: ContextType, path: PathType
     ):
         try:
             return char_str.character._parsereport(stream, context, path)
         except StreamError:
-            if require:
+            require_ = require(context) if callable(require) else require
+            if require_:
                 raise
             else:
                 raise char_str.StopHere()
@@ -279,28 +298,38 @@ def _get_next_char_or_maybe_error(require: bool) -> CharGetterFuncType:
     return _get_next_char
 
 
-def _terminating_checker(term: str) -> KeepGoingFuncType:
-    def terminating_string_check(char_str: CharacterString, data: str) -> bool:
-        return len(data) < len(term) or data[-len(term) :] != term
+def _terminating_checker(term: ContextVariable[str]) -> KeepGoingFuncType:
+    def terminating_string_check(
+        char_str: CharacterString, data: str, context: ContextType
+    ) -> bool:
+        term_ = term(context) if callable(term) else term
+        return len(data) < len(term_) or data[-len(term_) :] != term
 
     return terminating_string_check
 
 
-def _terminating_post_processor(term: str, consume: bool) -> PostProcessFuncType:
-    def terminating_post_process(char_str: CharacterString, data: str) -> str:
-        if consume and len(data) >= len(term) and data.endswith(term):
-            data = data[: -len(term)]
+def _terminating_post_processor(
+    term: ContextVariable[str], consume: ContextVariable[bool]
+) -> PostProcessFuncType:
+    def terminating_post_process(
+        char_str: CharacterString, data: str, context: ContextType
+    ) -> str:
+        term_ = term(context) if callable(term) else term
+        consume_ = consume(context) if callable(consume) else consume
+        if consume_ and len(data) >= len(term_) and data.endswith(term_):
+            data = data[: -len(term_)]
         return data
 
     return terminating_post_process
 
 
-def _terminating_string_builder(term: str) -> BuildFuncType:
+def _terminating_string_builder(term: ContextVariable[str]) -> BuildFuncType:
     def _build_terminated_string(
         char_str: CharacterString, obj, stream: IO, context: ContextType, path: PathType
     ) -> bytes:
+        term_ = term(context) if callable(term) else term
         data = b""
-        for char in obj + term:
+        for char in obj + term_:
             data += char_str.character._build(char, stream, context, path)
         return data
 
