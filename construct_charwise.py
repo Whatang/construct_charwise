@@ -76,7 +76,7 @@ class Character(Construct):
 # Parsing functions to be used by Characters
 
 def _parse_utf8(character: Character, stream, context, path):
-    first = stream_read(stream, 1)
+    first = stream.read(stream, 1)
     data = first
     first = first[0]
     if first & 0x80 != 0:
