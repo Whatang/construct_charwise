@@ -1,4 +1,3 @@
-from construct.lib.py3compat import *
 from typing import (
     Any,
     Hashable,
@@ -9,6 +8,8 @@ from typing import (
     Iterator,
     Optional as TypingOptional,
     Mapping as TypingMapping,
+    Union as TypingUnion,
+    Tuple as TypingTuple,
 )
 import re
 
@@ -36,9 +37,11 @@ class Container(dict):
     def items(self) -> ItemsView: ...
     def __iter__(self) -> Iterator[Any]: ...
     def clear(self) -> None: ...
-    def pop(self, key: Any, default=TypingOptional[Any]): ...  # type: ignopre
+    def pop(self, key: Any, default=TypingOptional[Any]): ...  # type: ignore
     def popitem(self): ...
-    def update(self, seqordict: Union[TypingMapping, List[Tuple[Any, Any]]]) -> None: ...  # type: ignore
+    def update(  # type: ignore
+        self, seqordict: TypingUnion[TypingMapping, List[TypingTuple[Any, Any]]]
+    ) -> None: ...
     def __getstate__(self): ...
     def __setstate__(self, state: Any) -> None: ...
     def copy(self): ...

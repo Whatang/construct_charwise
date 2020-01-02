@@ -1,17 +1,17 @@
-from construct.lib.py3compat import *
+from __future__ import annotations
 from typing import List
 
 class HexDisplayedInteger(int):
     def __str__(self) -> str: ...
     def new(intvalue, fmtstr) -> HexDisplayedInteger: ...
 
-class HexDisplayedBytes(bytestringtype):
+class HexDisplayedBytes(bytes):
     def __str__(self) -> str: ...
 
 class HexDisplayedDict(dict):
     def __str__(self) -> str: ...
 
-class HexDumpDisplayedBytes(bytestringtype):
+class HexDumpDisplayedBytes(bytes):
     def __str__(self) -> str: ...
 
 class HexDumpDisplayedDict(dict):

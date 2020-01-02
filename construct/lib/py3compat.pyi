@@ -1,6 +1,13 @@
 import builtins
 from enum import IntEnum as IntEnum, IntFlag as IntFlag
-from typing import Any, Tuple, Type, Mapping as TypingMapping, Iterable, Union
+from typing import (
+    Any,
+    Tuple,
+    Type,
+    Mapping as TypingMapping,
+    Iterable,
+    Union as TypingUnion,
+)
 
 PY: bool
 PY2: bool
@@ -28,8 +35,8 @@ ITERATEBYTES_CACHE: TypingMapping[int, bytes]
 
 def iteratebytes(data: bytes) -> Iterable[bytes]: ...
 def iterateints(data: bytes) -> Iterable[int]: ...
-def reprstring(data: Union[bytes, str]) -> str: ...
-def trimstring(data: Union[bytes, str]) -> str: ...
+def reprstring(data: TypingUnion[bytes, str]) -> str: ...
+def trimstring(data: TypingUnion[bytes, str]) -> str: ...
 
 bytes = builtins.bytes
 

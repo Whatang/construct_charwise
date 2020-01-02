@@ -1,4 +1,3 @@
-from construct.lib.py3compat import *
 from typing import Any, Mapping as TypingMapping
 
 def integer2bits(number: int, width: int) -> bytes: ...

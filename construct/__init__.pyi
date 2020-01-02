@@ -2,8 +2,6 @@ from construct.core import *
 from construct.expr import *
 from construct.debug import *
 from construct.version import *
-from construct import lib as lib
-from typing import Optional as TypingOptional
 
 __author__: str
 __version__: str
