@@ -1,6 +1,13 @@
 from __future__ import annotations
-from construct import Construct, SizeofError, StreamError
-from typing import Dict, Iterable, Union, IO, Callable, Any, Container, TypeVar
+from construct import (
+    Construct,
+    SizeofError,
+    StreamError,
+    Container,
+    Path,
+    evaluate,
+)
+from typing import Dict, Iterable, Union, IO, Callable, TypeVar, Any
 import attr
 
 # Base construct for reading 1 character at a time from a byetstream containing
