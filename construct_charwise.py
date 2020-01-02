@@ -14,9 +14,8 @@ import attr
 # the `get` class method.
 
 ContextType = Container
-PathType = Any
-ParserFuncType = Callable[["Character", IO, ContextType, PathType], str]
-SizeOfFuncType = Callable[["Character", ContextType, PathType], int]
+ParserFuncType = Callable[["Character", IO, ContextType, Path], str]
+SizeOfFuncType = Callable[["Character", ContextType, Path], int]
 
 
 @attr.s
@@ -36,17 +35,17 @@ class Character(Construct):
     def encode_str(self, string: str) -> bytes:
         return bytes(string, self.encoding_name)
 
-    def _parse(self, stream: IO, context: ContextType, path: PathType) -> str:
+    def _parse(self, stream: IO, context: ContextType, path: Path) -> str:
         return self.parse_func(self, stream, context, path)
 
-    def _build(self, obj, stream: IO, context: ContextType, path: PathType) -> bytes:
+    def _build(self, obj: str, stream: IO, context: ContextType, path: Path) -> str:
         data = b""
         if len(obj) > 0:
             data = bytes(obj[0], self.encoding_name)
             stream.write(data)
         return data
 
-    def _sizeof(self, context: ContextType, path: PathType) -> int:
+    def _sizeof(self, context: ContextType, path: Path) -> int:
         return self.sizeof_func(self, context, path)
 
     @classmethod
@@ -92,7 +91,7 @@ class Character(Construct):
 
 
 def _parse_utf8(
-    character: Character, stream: IO, context: ContextType, path: PathType
+    character: Character, stream: IO, context: ContextType, path: Path
 ) -> str:
     first = stream.read(1)
     data = first
@@ -120,12 +119,12 @@ def _parse_fixed_width(
 # Sizeof functions
 
 
-def _sizeof_error(character: Character, context: ContextType, path: PathType):
+def _sizeof_error(character: Character, context: ContextType, path: Path):
     raise SizeofError()
 
 
 def _fixed_sizeof(width: int) -> SizeOfFuncType:
-    def fixed_width(character: Character, context: ContextType, path: PathType) -> int:
+    def fixed_width(character: Character, context: ContextType, path: Path) -> int:
         return width
 
     return fixed_width
@@ -152,10 +151,10 @@ Character.add_encoding(
 _T = TypeVar("_T")
 ContextVariable = Union[_T, Callable[[ContextType], _T]]
 
-CharGetterFuncType = Callable[["CharacterString", IO, ContextType, PathType], str]
+CharGetterFuncType = Callable[["CharacterString", IO, ContextType, Path], str]
 KeepGoingFuncType = Callable[["CharacterString", str, ContextType], bool]
 PostProcessFuncType = Callable[["CharacterString", str, ContextType], str]
-BuildFuncType = Callable[["CharacterString", Any, IO, ContextType, PathType], bytes]
+BuildFuncType = Callable[["CharacterString", str, IO, ContextType, Path], Any]
 
 
 @attr.s
@@ -172,7 +171,7 @@ class CharacterString(Construct):
     def __attrs_post_init__(self):
         super(CharacterString, self).__init__()
 
-    def _parse(self, stream: IO, context: ContextType, path: PathType) -> str:
+    def _parse(self, stream: IO, context: ContextType, path: Path) -> str:
         data = ""
         try:
             while self._keep_going_checker(self, data, context):
@@ -185,10 +184,10 @@ class CharacterString(Construct):
             raise StreamError()
         return self._post_processor(self, data, context)
 
-    def _build(self, obj, stream: IO, context: ContextType, path: PathType) -> bytes:
+    def _build(self, obj: str, stream: IO, context: ContextType, path: Path) -> str:
         return self._builder(self, obj, stream, context, path)
 
-    def _sizeof(self, context: ContextType, path: PathType) -> int:
+    def _sizeof(self, context: ContextType, path: Path) -> int:
         # TODO: implement sizeof capability
         raise NotImplementedError
 
@@ -229,7 +228,7 @@ FixedLengthCharacterString = CharStringFactory(make_fixed_length_char_string)
 
 
 def _simple_get_next_char(
-    char_str: CharacterString, stream: IO, context: ContextType, path: PathType
+    char_str: CharacterString, stream: IO, context: ContextType, path: Path
 ) -> str:
     return char_str.character._parsereport(stream, context, path)
 
@@ -251,8 +250,8 @@ def _do_nothing_post_processor(
 
 def _fixed_length_builder(length: ContextVariable[int]) -> BuildFuncType:
     def _fixed_length_string_builder(
-        cstr: CharacterString, obj, stream: IO, context: ContextType, path: PathType
-    ) -> bytes:
+        cstr: CharacterString, obj: str, stream: IO, context: ContextType, path: Path,
+    ) -> str:
         # TODO: what's the right behavior here?
         raise NotImplementedError()
 
@@ -283,7 +282,7 @@ TerminatedCharacterString = CharStringFactory(make_terminated_character_string)
 
 def _get_next_char_or_maybe_error(require: ContextVariable[bool]) -> CharGetterFuncType:
     def _get_next_char(
-        char_str: CharacterString, stream: IO, context: ContextType, path: PathType
+        char_str: CharacterString, stream: IO, context: ContextType, path: Path
     ):
         try:
             return char_str.character._parsereport(stream, context, path)
