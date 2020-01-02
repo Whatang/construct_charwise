@@ -43,7 +43,7 @@ class Character(Construct):
         if len(obj) > 0:
             data = bytes(obj[0], self.encoding_name)
             stream.write(data)
-        return data
+        return obj
 
     def _sizeof(self, context: ContextType, path: Path) -> int:
         return self.sizeof_func(self, context, path)
@@ -330,8 +330,8 @@ def _terminating_string_builder(term: ContextVariable[str]) -> BuildFuncType:
     ) -> str:
         term_ = evaluate(term, context)
         for char in obj + term_:
-            data += char_str.character._build(char, stream, context, path)
-        return data
+            char_str.character._build(char, stream, context, path)
+        return obj
 
     return _build_terminated_string
 
