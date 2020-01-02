@@ -238,8 +238,7 @@ def _fixed_length_checker(length: ContextVariable[int]) -> KeepGoingFuncType:
     def has_reached_fixed_length(
         char_str: CharacterString, data: str, context: ContextType
     ) -> bool:
-        length_ = length(context) if callable(length) else length
-        return len(data) < length_
+        return len(data) < evaluate(length, context)
 
     return has_reached_fixed_length
 
@@ -289,8 +288,7 @@ def _get_next_char_or_maybe_error(require: ContextVariable[bool]) -> CharGetterF
         try:
             return char_str.character._parsereport(stream, context, path)
         except StreamError:
-            require_ = require(context) if callable(require) else require
-            if require_:
+            if evaluate(require, context):
                 raise
             else:
                 raise char_str.StopHere()
@@ -302,7 +300,7 @@ def _terminating_checker(term: ContextVariable[str]) -> KeepGoingFuncType:
     def terminating_string_check(
         char_str: CharacterString, data: str, context: ContextType
     ) -> bool:
-        term_ = term(context) if callable(term) else term
+        term_ = evaluate(term, context)
         return len(data) < len(term_) or data[-len(term_) :] != term
 
     return terminating_string_check
@@ -314,8 +312,8 @@ def _terminating_post_processor(
     def terminating_post_process(
         char_str: CharacterString, data: str, context: ContextType
     ) -> str:
-        term_ = term(context) if callable(term) else term
-        consume_ = consume(context) if callable(consume) else consume
+        term_ = evaluate(term, context)
+        consume_ = evaluate(consume, context)
         if consume_ and len(data) >= len(term_) and data.endswith(term_):
             data = data[: -len(term_)]
         return data
@@ -325,10 +323,13 @@ def _terminating_post_processor(
 
 def _terminating_string_builder(term: ContextVariable[str]) -> BuildFuncType:
     def _build_terminated_string(
-        char_str: CharacterString, obj, stream: IO, context: ContextType, path: PathType
-    ) -> bytes:
-        term_ = term(context) if callable(term) else term
-        data = b""
+        char_str: CharacterString,
+        obj: str,
+        stream: IO,
+        context: ContextType,
+        path: Path,
+    ) -> str:
+        term_ = evaluate(term, context)
         for char in obj + term_:
             data += char_str.character._build(char, stream, context, path)
         return data
