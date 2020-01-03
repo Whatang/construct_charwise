@@ -1,4 +1,3 @@
-from sys import maxsize as maxsize
 from typing import Any, Optional as TypingOptional, IO, Callable
 
 class RestreamedBytesIO:

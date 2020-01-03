@@ -6,7 +6,6 @@ from construct.lib import (
     HexDisplayedDict,
     HexDisplayedInteger,
     HexDumpDisplayedBytes,
-    HexDumpDisplayedDict,
 )
 from construct.expr import Path
 
@@ -31,8 +30,6 @@ from typing import (
     Iterable,
     MutableMapping,
     NamedTuple as TypingNamedTuple,
-    Generic,
-    get_type_hints
 )
 
 # Additional types to make some of what follows easier
