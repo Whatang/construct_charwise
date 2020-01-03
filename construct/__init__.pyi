@@ -1,6 +1,7 @@
 from construct.core import *
 from construct.expr import *
 from construct.debug import *
+from construct.lib import *
 from construct.version import *
 
 __author__: str
